@@ -1,0 +1,278 @@
+<?php
+include_once DRUPAL_ROOT . '/' . drupal_get_path('module', 'bbcode') . '/bbcode-filter.inc';
+include_once DRUPAL_ROOT . '/' . drupal_get_path('module', 'sv_migration') . '/vendor/autoload.php';
+
+/*
+TRUNCATE `comment`;
+TRUNCATE `field_data_body`;
+TRUNCATE `field_data_comment_body`;
+TRUNCATE `field_data_field_legacy_id`;
+TRUNCATE `field_data_taxonomy_forums`;
+TRUNCATE `field_revision_body`;
+TRUNCATE `field_revision_comment_body`;
+TRUNCATE `field_revision_field_legacy_id`;
+TRUNCATE `field_revision_taxonomy_forums`;
+TRUNCATE `field_data_field_image`;
+TRUNCATE `field_revision_field_image`;
+TRUNCATE `file_usage`;
+TRUNCATE `file_managed`;
+TRUNCATE `forum`;
+TRUNCATE `forum_index`;
+TRUNCATE `node`;
+TRUNCATE `node_revision`;
+TRUNCATE `node_comment_statistics`;
+TRUNCATE `pathauto_state`;
+TRUNCATE `taxonomy_index`;
+TRUNCATE `url_alias`;
+
+UPDATE field_data_body SET body_value = REPLACE(body_value, 'http://localhost:8080/drupal-7.41/','');
+UPDATE field_data_body SET body_value = REPLACE(body_value, '""','"');
+UPDATE field_data_body SET body_summary = REPLACE(body_summary, 'http://localhost:8080/drupal-7.41/','');
+UPDATE field_data_body SET body_summary = REPLACE(body_summary, '""','"');
+UPDATE field_revision_body SET body_value = REPLACE(body_value, 'http://localhost:8080/drupal-7.41/','');
+UPDATE field_revision_body SET body_value = REPLACE(body_value, '""','"');
+UPDATE field_revision_body SET body_summary = REPLACE(body_summary, 'http://localhost:8080/drupal-7.41/','');
+UPDATE field_revision_body SET body_summary = REPLACE(body_summary, '""','"');
+
+UPDATE field_data_comment_body SET comment_body_value = REPLACE(comment_body_value, '""','"');
+UPDATE field_data_comment_body SET comment_body_value = REPLACE(comment_body_value, 'http://localhost:8080/drupal-7.41/','');
+UPDATE field_revision_comment_body SET comment_body_value = REPLACE(comment_body_value, '""','"');
+UPDATE field_revision_comment_body SET comment_body_value = REPLACE(comment_body_value, 'http://localhost:8080/drupal-7.41/','');
+*/
+
+function sv_migration_menu() {
+  $items['import/topic'] = array(
+    'title' => 'import topic',
+    'page callback' => 'import_topic',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['import/reply'] = array(
+    'title' => 'import reply',
+    'page callback' => 'import_reply',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['import/members'] = array(
+    'title' => 'import members',
+    'page callback' => 'import_members',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['import/galleries'] = array(
+    'title' => 'import members',
+    'page callback' => 'import_galleries',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+function import_topic() {
+
+  $query = db_select('forum_topics', 't');
+      $query->join('forum_members', 'm', 't.T_AUTHOR = m.MEMBER_ID'); //JOIN node with users
+      $query->fields('t');
+      $query->fields('m',array('M_NAME'));
+      $query->condition('FORUM_ID', array(2,4,10),'IN');
+      $result = $query->execute();
+
+  foreach ($result->fetchAll() as $record) {
+
+    $user = user_load_by_name($record->M_NAME);
+    $body_text = _parse_html($record->T_MESSAGE);
+
+    $node = new stdClass();
+    $node->type = 'forum';
+    node_object_prepare($node);
+
+    $node->title    = $record->T_SUBJECT;
+    $node->language = 'it';
+    $node->created = _ricavadata($record->T_DATE);
+    $node->uid = $user->uid;
+
+    $node->body['und'][0]['value']   = $body_text;
+    $node->body['und'][0]['summary'] = text_summary($body_text);
+    $node->body['und'][0]['format']  = 'full_html';
+
+    $node->taxonomy_forums['und'][0]['tid'] = 1;
+    $node->field_legacy_id['und'][0]['value'] = $record->TOPIC_ID;
+
+    $node->path['pathauto'] = TRUE;
+
+    node_save($node);
+  }
+
+
+}
+
+function import_reply() {
+
+  $query = db_select('forum_reply', 'r');
+      $query->join('forum_members', 'm', 'r.R_AUTHOR = m.MEMBER_ID'); //JOIN node with users
+      $query->fields('r');
+      $query->fields('m',array('M_NAME'));
+      $query->condition('FORUM_ID', array(2,4,10),'IN');
+      $result = $query->execute();
+
+  foreach ($result->fetchAll() as $record) {
+
+    $user = user_load_by_name($record->M_NAME);
+    $body_text = _parse_html($record->R_MESSAGE);
+
+    $comment = new stdClass();
+    $comment->nid = _find_nid($record->TOPIC_ID); // nid of a node you want to attach a comment to
+    $comment->cid = 0; // leave it as is
+    $comment->pid = 0; // parent comment id, 0 if none
+    $comment->uid = $user->uid; // user's id, who left the comment
+    //$comment->mail = 'email@example.com'; // user's email
+    //$comment->name = 'User name'; // If user is authenticated you can omit this field, it will be auto-populated, if the user is anonymous and you want to name him somehow, input his name here
+    //$comment->thread = '01/'; // OPTIONAL. If you need comments to be threaded you can fill this value. Otherwise omit it.
+    $comment->hostname = $record->R_IP; // OPTIONAL. You can log poster's ip here
+    $comment->created = _ricavadata($record->R_DATE); // OPTIONAL. You can set any time you want here. Useful for backdated comments creation.
+    $comment->is_anonymous = 0; // leave it as is
+    $comment->homepage = ''; // you can add homepage URL here
+    $comment->status = COMMENT_PUBLISHED; // We auto-publish this comment
+    $comment->language = LANGUAGE_NONE; // The same as for a node
+    //$comment->subject = truncate_utf8(strip_tags($body_text), 20);
+    $comment->comment_body[$comment->language][0]['value'] = $body_text; // Everything here is pretty much like with a node
+    $comment->comment_body[$comment->language][0]['format'] = 'full_html';
+
+    //Call the comment_submit and comment_save function to create the comments
+
+    comment_submit($comment); // saving a comment
+    comment_save($comment);
+
+    db_update('comment')
+      ->fields(array(
+          'hostname' => $record->R_IP,
+        ))
+      ->condition('cid', $comment->cid)
+      ->execute();
+    }
+}
+
+function import_galleries() {
+
+    $query = db_select('forum_topics', 't');
+    $query->fields('t',array('ALBUM_URL'));
+    $query->fields('n',array('entity_id'));
+    $query->join('field_data_field_legacy_id', 'n', 't.TOPIC_ID = n.field_legacy_id_value');
+    $query->condition('t.ALBUM_URL', 'NONE','<>');
+    $result = $query->execute();
+
+  foreach ($result->fetchAll() as $record) {
+    $node = node_load($record->entity_id);
+    unset($node->field_image);
+    $path = '/Applications/mampstack-5.6.17-1/apache2/htdocs/'.str_replace("\\","/",$record->ALBUM_URL);
+    $files = array_diff(scandir($path), array('.', '..'));
+    foreach ($files as $key => $file) {
+      $image_url = 'http://localhost:8080/'.str_replace("\\","/",$record->ALBUM_URL).$file;
+      $file = system_retrieve_file($image_url, 'public://', TRUE);
+      $node->field_image[LANGUAGE_NONE][] = (array) $file;
+    }
+    node_save($node);
+  }
+}
+
+function import_members() {
+
+  $result = db_select('forum_members', 'm')
+      ->fields('m')
+      ->execute();
+
+  foreach ($result->fetchAll() as $record) {
+    //This will generate a random password, you could set your own here
+   $password = user_password(8);
+    //set up the user fields
+    $fields = array(
+      'name' => $record->M_NAME,
+      'mail' => $record->M_EMAIL,
+      'pass' => $password,
+      'status' => 1,
+      'created' => _ricavadata ($record->M_DATE),
+      'init' => $record->M_EMAIL,
+      'roles' => array(
+        DRUPAL_AUTHENTICATED_RID => 'authenticated user',
+      ),
+    );
+
+    //the first parameter is left blank so a new user is created
+    $account = user_save('', $fields);
+  }
+
+}
+
+function _ricavadata ($text) {
+  return strtotime(substr($text,0, 4)."-".substr($text,4, 2)."-".substr($text,6, 2)." ".substr($text,8, 2).":".substr($text,10, 2).":".substr($text,12, 2));
+}
+
+function _parse_img($html) {
+
+  $html = str_replace('src="images','src="http://www.skyvolley.net/oldweb/images',$html);
+  $html = str_replace('src="public/agenziaviaggi','src="http://www.skyvolley.net/oldweb/agenziaviaggi',$html);
+  $html = str_replace('src="/Public/data/','src="http://www.skyvolley.net/oldweb/Data/',$html);
+
+  $dom = new domDocument;
+  $dom->loadHTML($html);
+  $dom->preserveWhiteSpace = false;
+  $images = $dom->getElementsByTagName('img');
+
+  foreach ($images as $image)
+     {
+       $src = _clean_url($image->getAttribute('src')); // Whether or not to create a Drupal file record
+       $path = system_retrieve_file($src, 'public://', TRUE);
+       $html = str_replace($image->getAttribute('src'),file_create_url($path),$html);
+     }
+  return $html;
+}
+
+function _parse_html($body_text) {
+  $config = HTMLPurifier_Config::createDefault();
+  $purifier = new HTMLPurifier($config);
+  $bbcode = new Golonka\BBCode\BBCodeParser;
+  // BBcode array
+  $find = array(
+    '~\[img=(.*?)\](.*?)\[/img\]~s'
+  );
+  // HTML tags to replace BBcode
+  $replace = array(
+    '<img src="$1" alt="" />'
+  );
+  $body_text = preg_replace($find,$replace,$body_text);
+  $body_text = _bbcode_filter_process($body_text, array(
+      'bbcode_make_links'       => 1,
+      'bbcode_filter_nofollow'  => 1,
+      'bbcode_encode_mailto'    => 1,
+      'bbcode_paragraph_breaks' => 2,
+      'bbcode_debug'            => 0,
+    ));
+  $body_text = $purifier->purify($body_text);
+  $body_text = $bbcode->parse($body_text, true);
+  $body_text = _parse_img($body_text);
+  $body_text = str_replace(array('id="quote"&gt;gt;','id="quote"&gt;'),'',$body_text);
+
+
+  return $body_text;
+}
+
+
+function _find_nid($TOPIC_ID) {
+
+  $query = new EntityFieldQuery();
+  $query
+    ->entityCondition('entity_type', 'node')
+    ->entityCondition('bundle', 'forum')
+    ->propertyOrderBy('created', 'DESC')
+    ->fieldCondition('field_legacy_id', 'value', array($TOPIC_ID))
+    ->range(0,1);
+  $result = $query->execute();
+  $nid = array_keys($result['node']);
+  return $nid[0];
+
+}
+
+
+function _clean_url($url) {
+  return str_replace(' ','%20',$url);
+}

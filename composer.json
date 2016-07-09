@@ -1,0 +1,6 @@
+{
+    "require": {
+        "ezyang/htmlpurifier": "^4.7",
+        "golonka/bbcodeparser": "^2.2"
+    }
+}
